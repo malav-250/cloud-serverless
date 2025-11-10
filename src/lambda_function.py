@@ -37,7 +37,7 @@ def get_sendgrid_api_key():
             client = get_secrets_client()
             response = client.get_secret_value(SecretId=secret_name)
             secret_data = json.loads(response['SecretString'])
-            sendgrid_api_key = secret_data.get('api_key')m km
+            sendgrid_api_key = secret_data.get('api_key')
         except ClientError as e:
             print(f"Error retrieving SendGrid API key: {e}")
             raise
