@@ -1,0 +1,68 @@
+name: Deploy Lambda Function
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  deploy-demo:
+    name: Deploy to Demo Environment
+    runs-on: ubuntu-latest
+    environment: demo
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -t package/
+          cp src/lambda_function.py package/
+      
+      - name: Create deployment package
+        run: |
+          cd package
+          zip -r ../lambda-deployment-${{ github.sha }}.zip .
+          cd ..
+      
+      - name: Configure AWS credentials for Demo
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID_DEMO }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY_DEMO }}
+          aws-region: ${{ secrets.AWS_REGION }}
+      
+      - name: Deploy to Lambda - Demo
+        run: |
+          aws lambda update-function-code \
+            --function-name csye6225-email-verification-demo \
+            --zip-file fileb://lambda-deployment-${{ github.sha }}.zip \
+            --region ${{ secrets.AWS_REGION }}
+      
+      - name: Wait for Lambda update to complete
+        run: |
+          aws lambda wait function-updated \
+            --function-name csye6225-email-verification-demo \
+            --region ${{ secrets.AWS_REGION }}
+      
+      - name: Publish new version
+        run: |
+          aws lambda publish-version \
+            --function-name csye6225-email-verification-demo \
+            --description "Deployed from GitHub Actions - SHA: ${{ github.sha }}" \
+            --region ${{ secrets.AWS_REGION }}
+      
+      - name: Upload artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: lambda-deployment-package-demo
+          path: lambda-deployment-${{ github.sha }}.zip
+          retention-days: 7
