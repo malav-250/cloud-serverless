@@ -1,4 +1,4 @@
-name: CI - Lambda Function Tests
+name: CI - Lambda Function Tests 
 
 on:
   pull_request:
