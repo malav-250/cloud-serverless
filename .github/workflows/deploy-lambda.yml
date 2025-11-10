@@ -61,7 +61,7 @@ jobs:
             --region ${{ secrets.AWS_REGION }}
       
       - name: Upload artifact
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: lambda-deployment-package-demo
           path: lambda-deployment-${{ github.sha }}.zip
