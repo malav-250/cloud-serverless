@@ -181,8 +181,12 @@ def lambda_handler(event, context):
             
             # Parse message JSON
             message_data = json.loads(sns_message)
-            email = message_data.get('email')
-            username = message_data.get('username', email)
+            
+            # Get email from either 'email' or 'username' field
+            # (webapp might send email as username)
+            email = message_data.get('email') or message_data.get('username')
+            first_name = message_data.get('first_name', '')
+            last_name = message_data.get('last_name', '')
             
             if not email:
                 print("Error: No email provided in SNS message")
@@ -192,6 +196,7 @@ def lambda_handler(event, context):
                 }
             
             print(f"Processing verification for: {email}")
+            print(f"User: {first_name} {last_name}")
             
             # Generate verification token
             token = generate_verification_token(email)
