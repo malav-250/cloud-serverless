@@ -170,6 +170,7 @@ class TestSendEmail:
         result = send_verification_email("test@example.com", "token")
         assert result is False
 
+
 class TestLambdaHandler:
     """Test main Lambda handler"""
     
@@ -177,7 +178,7 @@ class TestLambdaHandler:
     @patch('lambda_function.store_token_in_dynamodb')
     @patch('lambda_function.generate_verification_token')
     def test_lambda_handler_success(self, mock_gen_token, mock_store, mock_send):
-        """Test successful Lambda execution"""
+        """Test successful Lambda execution with email field"""
         # Setup mocks
         mock_gen_token.return_value = "test_token_123"
         mock_store.return_value = True
@@ -191,7 +192,8 @@ class TestLambdaHandler:
                     'Sns': {
                         'Message': json.dumps({
                             'email': 'test@example.com',
-                            'username': 'testuser'
+                            'first_name': 'Test',
+                            'last_name': 'User'
                         })
                     }
                 }
@@ -211,15 +213,112 @@ class TestLambdaHandler:
     @patch('lambda_function.send_verification_email')
     @patch('lambda_function.store_token_in_dynamodb')
     @patch('lambda_function.generate_verification_token')
-    def test_lambda_handler_no_email(self, mock_gen_token, mock_store, mock_send):
-        """Test Lambda with missing email"""
+    def test_lambda_handler_username_as_email(self, mock_gen_token, mock_store, mock_send):
+        """Test Lambda execution when email is in username field (webapp format)"""
+        # Setup mocks
+        mock_gen_token.return_value = "test_token_123"
+        mock_store.return_value = True
+        mock_send.return_value = True
+        
+        # Create test event with username instead of email (webapp format)
         event = {
             'Records': [
                 {
                     'EventSource': 'aws:sns',
                     'Sns': {
                         'Message': json.dumps({
-                            'username': 'testuser'
+                            'username': 'user@example.com',
+                            'password': 'SecurePass123!',
+                            'first_name': 'John',
+                            'last_name': 'Doe'
+                        })
+                    }
+                }
+            ]
+        }
+        
+        # Execute
+        response = lambda_handler(event, None)
+        
+        # Assertions
+        assert response['statusCode'] == 200
+        assert 'successfully' in json.loads(response['body'])['message']
+        mock_gen_token.assert_called_once_with('user@example.com')
+        mock_store.assert_called_once()
+        mock_send.assert_called_once()
+    
+    @patch('lambda_function.send_verification_email')
+    @patch('lambda_function.store_token_in_dynamodb')
+    @patch('lambda_function.generate_verification_token')
+    def test_lambda_handler_email_priority_over_username(self, mock_gen_token, mock_store, mock_send):
+        """Test that email field takes priority over username field"""
+        # Setup mocks
+        mock_gen_token.return_value = "test_token_123"
+        mock_store.return_value = True
+        mock_send.return_value = True
+        
+        # Create test event with both email and username
+        event = {
+            'Records': [
+                {
+                    'EventSource': 'aws:sns',
+                    'Sns': {
+                        'Message': json.dumps({
+                            'email': 'correct@example.com',
+                            'username': 'wrong@example.com',
+                            'first_name': 'Test',
+                            'last_name': 'User'
+                        })
+                    }
+                }
+            ]
+        }
+        
+        # Execute
+        response = lambda_handler(event, None)
+        
+        # Assertions
+        assert response['statusCode'] == 200
+        # Verify that 'email' field was used, not 'username'
+        mock_gen_token.assert_called_once_with('correct@example.com')
+    
+    @patch('lambda_function.send_verification_email')
+    @patch('lambda_function.store_token_in_dynamodb')
+    @patch('lambda_function.generate_verification_token')
+    def test_lambda_handler_no_email_no_username(self, mock_gen_token, mock_store, mock_send):
+        """Test Lambda with missing both email and username"""
+        event = {
+            'Records': [
+                {
+                    'EventSource': 'aws:sns',
+                    'Sns': {
+                        'Message': json.dumps({
+                            'first_name': 'Test',
+                            'last_name': 'User'
+                        })
+                    }
+                }
+            ]
+        }
+        
+        response = lambda_handler(event, None)
+        assert response['statusCode'] == 400
+        assert 'Email is required' in json.loads(response['body'])['error']
+    
+    @patch('lambda_function.send_verification_email')
+    @patch('lambda_function.store_token_in_dynamodb')
+    @patch('lambda_function.generate_verification_token')
+    def test_lambda_handler_empty_username(self, mock_gen_token, mock_store, mock_send):
+        """Test Lambda with empty username field"""
+        event = {
+            'Records': [
+                {
+                    'EventSource': 'aws:sns',
+                    'Sns': {
+                        'Message': json.dumps({
+                            'username': '',
+                            'first_name': 'Test',
+                            'last_name': 'User'
                         })
                     }
                 }
@@ -242,7 +341,7 @@ class TestLambdaHandler:
                 {
                     'EventSource': 'aws:sns',
                     'Sns': {
-                        'Message': json.dumps({'email': 'test@example.com'})
+                        'Message': json.dumps({'username': 'test@example.com'})
                     }
                 }
             ]
@@ -266,7 +365,7 @@ class TestLambdaHandler:
                 {
                     'EventSource': 'aws:sns',
                     'Sns': {
-                        'Message': json.dumps({'email': 'test@example.com'})
+                        'Message': json.dumps({'username': 'test@example.com'})
                     }
                 }
             ]
@@ -312,7 +411,7 @@ class TestLambdaHandler:
                 {
                     'EventSource': 'aws:sns',
                     'Sns': {
-                        'Message': json.dumps({'email': 'user2@example.com'})
+                        'Message': json.dumps({'username': 'user2@example.com'})
                     }
                 }
             ]
@@ -323,6 +422,61 @@ class TestLambdaHandler:
         assert mock_gen_token.call_count == 2
         assert mock_store.call_count == 2
         assert mock_send.call_count == 2
+    
+    @patch('lambda_function.send_verification_email')
+    @patch('lambda_function.store_token_in_dynamodb')
+    @patch('lambda_function.generate_verification_token')
+    def test_lambda_handler_webapp_registration_format(self, mock_gen_token, mock_store, mock_send):
+        """Test Lambda with complete webapp user registration format"""
+        # Setup mocks
+        mock_gen_token.return_value = "test_token_123"
+        mock_store.return_value = True
+        mock_send.return_value = True
+        
+        # Create test event matching actual webapp SNS message format
+        event = {
+            'Records': [
+                {
+                    'EventSource': 'aws:sns',
+                    'Sns': {
+                        'Message': json.dumps({
+                            'username': 'malav@example.com',
+                            'password': 'SecurePass123!',
+                            'first_name': 'Malav',
+                            'last_name': 'Gajera'
+                        })
+                    }
+                }
+            ]
+        }
+        
+        # Execute
+        response = lambda_handler(event, None)
+        
+        # Assertions
+        assert response['statusCode'] == 200
+        assert 'successfully' in json.loads(response['body'])['message']
+        # Verify email extracted from username field
+        mock_gen_token.assert_called_once_with('malav@example.com')
+        mock_store.assert_called_once()
+        mock_send.assert_called_once()
+    
+    def test_lambda_handler_non_sns_event(self):
+        """Test Lambda with non-SNS event source"""
+        event = {
+            'Records': [
+                {
+                    'EventSource': 'aws:s3',
+                    'S3': {
+                        'bucket': {'name': 'test-bucket'}
+                    }
+                }
+            ]
+        }
+        
+        response = lambda_handler(event, None)
+        # Should process successfully but skip non-SNS records
+        assert response['statusCode'] == 200
 
 
 class TestSecretsManager:
