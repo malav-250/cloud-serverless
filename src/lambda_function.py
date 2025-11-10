@@ -32,7 +32,7 @@ def get_sendgrid_api_key():
     """Retrieve SendGrid API key from AWS Secrets Manager"""
     global sendgrid_api_key
     if sendgrid_api_key is None:
-        secret_name = os.environ.get('SENDGRID_SECRET_NAME', 'sendgrid-api-key')
+        secret_name = os.environ.get('SENDGRID_API_KEY_SECRET_NAME', 'csye6225-sendgrid-key-demo')
         try:
             client = get_secrets_client()
             response = client.get_secret_value(SecretId=secret_name)
