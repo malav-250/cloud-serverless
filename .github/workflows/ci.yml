@@ -32,4 +32,4 @@ jobs:
       - name: Compile Python files
         run: |
           # Compile all Python files to check for syntax errors
-          python -m py_compile src/**/*.py
+          python -m py_compile src/*.py
