@@ -1,12 +1,11 @@
 import json
 import os
 import boto3
-import hashlib
 import time
-from datetime import datetime, timedelta
+from datetime import datetime
 from botocore.exceptions import ClientError
 
-# Initialize AWS clients (lazy initialization for testing)
+# Initialize AWS clients
 dynamodb = None
 secrets_client = None
 sendgrid_api_key = None
@@ -44,26 +43,48 @@ def get_sendgrid_api_key():
     return sendgrid_api_key
 
 
-def generate_verification_token(email):
+def check_email_already_sent(email, token):
     """
-    Generate a unique verification token for the user
+    Check if email was already sent for this token
     
     Args:
         email (str): User's email address
+        token (str): Verification token
         
     Returns:
-        str: Hex-encoded verification token
+        bool: True if email was already sent, False otherwise
     """
-    timestamp = str(time.time())
-    random_string = os.urandom(32).hex()
-    token_input = f"{email}{timestamp}{random_string}"
-    token = hashlib.sha256(token_input.encode()).hexdigest()
-    return token
+    table_name = os.environ.get('DYNAMODB_TABLE_NAME', 'email-verification-tokens-demo')
+    
+    try:
+        db = get_dynamodb_client()
+        table = db.Table(table_name)
+        
+        # Check if this email+token combination exists
+        response = table.get_item(
+            Key={'email': email}
+        )
+        
+        if 'Item' in response:
+            stored_token = response['Item'].get('token')
+            email_sent = response['Item'].get('email_sent', False)
+            
+            # If same token and email already sent, return True (duplicate)
+            if stored_token == token and email_sent:
+                print(f"Email already sent for {email} with token {token}")
+                return True
+        
+        return False
+        
+    except ClientError as e:
+        print(f"Error checking DynamoDB: {e}")
+        # In case of error, assume not sent (fail open for better UX)
+        return False
 
 
-def store_token_in_dynamodb(email, token, ttl_minutes=2):
+def store_email_sent_record(email, token, ttl_minutes=2):
     """
-    Store verification token in DynamoDB with TTL
+    Store record that email was sent for this token
     
     Args:
         email (str): User's email address
@@ -73,7 +94,7 @@ def store_token_in_dynamodb(email, token, ttl_minutes=2):
     Returns:
         bool: True if successful, False otherwise
     """
-    table_name = os.environ.get('DYNAMODB_TABLE_NAME', 'csye6225-email-verification')
+    table_name = os.environ.get('DYNAMODB_TABLE_NAME', 'email-verification-tokens-demo')
     
     try:
         db = get_dynamodb_client()
@@ -82,43 +103,44 @@ def store_token_in_dynamodb(email, token, ttl_minutes=2):
         # Calculate TTL (2 minutes from now)
         ttl_timestamp = int(time.time()) + (ttl_minutes * 60)
         
-        # Store token with TTL
+        # Store record
         table.put_item(
             Item={
                 'email': email,
                 'token': token,
-                'created_at': datetime.utcnow().isoformat(),
+                'email_sent': True,
+                'sent_at': datetime.utcnow().isoformat(),
                 'ttl': ttl_timestamp
             }
         )
         
-        print(f"Token stored successfully for {email}")
+        print(f"Email sent record stored for {email}")
         return True
         
     except ClientError as e:
-        print(f"Error storing token in DynamoDB: {e}")
+        print(f"Error storing email record in DynamoDB: {e}")
         return False
 
 
-def send_verification_email(email, token):
+def send_verification_email(email, token, first_name):
     """
     Send verification email using SendGrid
     
     Args:
         email (str): User's email address
         token (str): Verification token
+        first_name (str): User's first name
         
     Returns:
         bool: True if email sent successfully, False otherwise
     """
     try:
-        # Import SendGrid here to avoid issues in testing
         from sendgrid import SendGridAPIClient
         from sendgrid.helpers.mail import Mail, Email, To, Content
         
         # Get environment variables
         from_email = os.environ.get('FROM_EMAIL', 'noreply@malavgajera.me')
-        domain = os.environ.get('DOMAIN', 'malavgajera.me')
+        domain = os.environ.get('DOMAIN', 'demo.malavgajera.me')
         
         # Construct verification link
         verification_link = f"http://{domain}/v1/user/verify?email={email}&token={token}"
@@ -131,13 +153,15 @@ def send_verification_email(email, token):
             html_content=f"""
             <html>
                 <body>
-                    <h2>Welcome to CSYE6225 Web Application!</h2>
-                    <p>Please verify your email address by clicking the link below:</p>
-                    <p><a href="{verification_link}">Verify Email Address</a></p>
+                    <h2>Welcome to CSYE6225, {first_name}!</h2>
+                    <p>Thank you for creating an account. Please verify your email address by clicking the link below:</p>
+                    <p><a href="{verification_link}" style="background-color: #4CAF50; color: white; padding: 14px 20px; text-align: center; text-decoration: none; display: inline-block;">Verify Email Address</a></p>
                     <p>Or copy and paste this link in your browser:</p>
-                    <p>{verification_link}</p>
-                    <p><strong>This link will expire in 2 minutes.</strong></p>
+                    <p style="word-break: break-all;">{verification_link}</p>
+                    <p><strong>This link will expire in 1 minute.</strong></p>
                     <p>If you did not create an account, please ignore this email.</p>
+                    <hr>
+                    <p style="color: #666; font-size: 12px;">This is an automated message from CSYE6225 Cloud Computing course.</p>
                 </body>
             </html>
             """
@@ -182,11 +206,12 @@ def lambda_handler(event, context):
             # Parse message JSON
             message_data = json.loads(sns_message)
             
-            # Get email from either 'email' or 'username' field
-            # (webapp might send email as username)
-            email = message_data.get('email') or message_data.get('username')
+            # Extract data from message
+            email = message_data.get('email')
             first_name = message_data.get('first_name', '')
             last_name = message_data.get('last_name', '')
+            token = message_data.get('token')  # Token generated by webapp
+            token_expiry = message_data.get('token_expiry')
             
             if not email:
                 print("Error: No email provided in SNS message")
@@ -195,26 +220,37 @@ def lambda_handler(event, context):
                     'body': json.dumps({'error': 'Email is required'})
                 }
             
+            if not token:
+                print("Error: No token provided in SNS message")
+                return {
+                    'statusCode': 400,
+                    'body': json.dumps({'error': 'Verification token is required'})
+                }
+            
             print(f"Processing verification for: {email}")
             print(f"User: {first_name} {last_name}")
+            print(f"Token: {token}")
+            print(f"Token Expiry: {token_expiry}")
             
-            # Generate verification token
-            token = generate_verification_token(email)
-            print(f"Generated token for {email}")
-            
-            # Store token in DynamoDB
-            if not store_token_in_dynamodb(email, token):
+            # ============================================================================
+            # PHASE 9: Check if email already sent (prevent duplicates)
+            # ============================================================================
+            if check_email_already_sent(email, token):
+                print(f"Duplicate email prevented for {email}")
                 return {
-                    'statusCode': 500,
-                    'body': json.dumps({'error': 'Failed to store verification token'})
+                    'statusCode': 200,
+                    'body': json.dumps({'message': 'Email already sent for this token'})
                 }
             
             # Send verification email
-            if not send_verification_email(email, token):
+            if not send_verification_email(email, token, first_name):
                 return {
                     'statusCode': 500,
                     'body': json.dumps({'error': 'Failed to send verification email'})
                 }
+            
+            # Store record that email was sent
+            store_email_sent_record(email, token)
             
             print(f"Email verification process completed for {email}")
         
