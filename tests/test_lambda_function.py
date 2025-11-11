@@ -457,6 +457,6 @@ class TestSecretsManager:
         
         with pytest.raises(ClientError):
             get_sendgrid_api_key()
-
+ 
 
 # Run tests with: pytest tests/test_lambda_function.py -v
