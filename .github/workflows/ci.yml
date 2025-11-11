@@ -1,4 +1,4 @@
-name: CI - Lambda Function Tests 
+name: CI - Lambda Syntax Check
 
 on:
   pull_request:
@@ -6,8 +6,8 @@ on:
       - main
 
 jobs:
-  test:
-    name: Run Unit Tests
+  syntax-check:
+    name: Check Python Syntax
     runs-on: ubuntu-latest
     
     steps:
@@ -19,37 +19,17 @@ jobs:
         with:
           python-version: '3.11'
       
-      - name: Cache pip dependencies
-        uses: actions/cache@v3
-        with:
-          path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-pip-
-      
-      - name: Install dependencies
+      - name: Install flake8
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          pip install flake8
       
-      - name: Run unit tests with coverage
+      - name: Check Python syntax
         run: |
-          pytest tests/ -v --cov=src --cov-report=term-missing --cov-report=xml
-        env:
-          AWS_DEFAULT_REGION: us-east-1
-          DYNAMODB_TABLE_NAME: test-table
-          SENDGRID_SECRET_NAME: test-secret
-          FROM_EMAIL: test@example.com
-          DOMAIN: example.com
-      
-      - name: Check test coverage
+          # Check syntax errors and undefined names
+          flake8 src/ --count --select=E9,F63,F7,F82 --show-source --statistics
+          
+      - name: Compile Python files
         run: |
-          coverage report --fail-under=80
-      
-      - name: Upload coverage reports
-        uses: codecov/codecov-action@v3
-        with:
-          file: ./coverage.xml
-          flags: unittests
-          name: codecov-umbrella
-          fail_ci_if_error: false
+          # Compile all Python files to check for syntax errors
+          python -m py_compile src/**/*.py

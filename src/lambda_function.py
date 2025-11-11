@@ -1,6 +1,8 @@
 import json
 import os
 import boto3
+from urllib.parse import quote
+
 import time
 from datetime import datetime
 from botocore.exceptions import ClientError
@@ -142,8 +144,10 @@ def send_verification_email(email, token, first_name):
         from_email = os.environ.get('FROM_EMAIL', 'noreply@malavgajera.me')
         domain = os.environ.get('DOMAIN', 'demo.malavgajera.me')
         
+        encoded_email = quote(email, safe='') 
+        
         # Construct verification link
-        verification_link = f"http://{domain}/v1/user/verify?email={email}&token={token}"
+        verification_link = f"http://{domain}/v1/user/verify?email={encoded_email}&token={token}"
         
         # Create email message
         message = Mail(
