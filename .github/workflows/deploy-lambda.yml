@@ -61,6 +61,24 @@ jobs:
             --function-name csye6225-email-verification-dev \
             --region ${{ secrets.AWS_REGION }}
       
+      - name: Update Lambda Environment Variables - Dev
+        run: |
+          aws lambda update-function-configuration \
+            --function-name csye6225-email-verification-dev \
+            --environment Variables="{
+              DOMAIN=dev.malavgajera.me,
+              FROM_EMAIL=noreply@malavgajera.me,
+              SENDGRID_API_KEY_SECRET_NAME=csye6225-sendgrid-key-dev,
+              DYNAMODB_TABLE_NAME=email-verification-tokens-dev
+            }" \
+            --region ${{ secrets.AWS_REGION }}
+      
+      - name: Wait for configuration update
+        run: |
+          aws lambda wait function-updated \
+            --function-name csye6225-email-verification-dev \
+            --region ${{ secrets.AWS_REGION }}
+      
       - name: Publish new version - Dev
         run: |
           aws lambda publish-version \
@@ -119,6 +137,24 @@ jobs:
             --region ${{ secrets.AWS_REGION }}
       
       - name: Wait for Lambda update to complete
+        run: |
+          aws lambda wait function-updated \
+            --function-name csye6225-email-verification-demo \
+            --region ${{ secrets.AWS_REGION }}
+      
+      - name: Update Lambda Environment Variables - Demo
+        run: |
+          aws lambda update-function-configuration \
+            --function-name csye6225-email-verification-demo \
+            --environment Variables="{
+              DOMAIN=demo.malavgajera.me,
+              FROM_EMAIL=noreply@malavgajera.me,
+              SENDGRID_API_KEY_SECRET_NAME=csye6225-sendgrid-key-demo,
+              DYNAMODB_TABLE_NAME=email-verification-tokens-demo
+            }" \
+            --region ${{ secrets.AWS_REGION }}
+      
+      - name: Wait for configuration update
         run: |
           aws lambda wait function-updated \
             --function-name csye6225-email-verification-demo \
