@@ -1,6 +1,6 @@
 name: CI - Lambda Syntax Check
 
-on:
+on: 
   pull_request:
     branches:
       - main
