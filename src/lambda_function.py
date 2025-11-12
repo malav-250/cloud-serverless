@@ -147,7 +147,7 @@ def send_verification_email(email, token, first_name):
         encoded_email = quote(email, safe='') 
         
         # Construct verification link
-        verification_link = f"http://{domain}/v1/user/verify?email={encoded_email}&token={token}"
+        verification_link = f"https://{domain}/v1/user/verify?email={encoded_email}&token={token}"
         
         # Create email message
         message = Mail(
