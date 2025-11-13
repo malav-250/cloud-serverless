@@ -1,175 +1,224 @@
-name: Deploy Lambda Function 
+name: Deploy Lambda Function
 
 on:
-  workflow_dispatch:
-    inputs:
-      environment:
-        description: 'Environment to deploy to (based on which Terraform is applied)'
-        required: true
-        type: choice
-        options:
-          - dev
-          - demo
+  push:
+    branches:
+      - main
+    paths:
+      - 'src/**'
+      - 'requirements.txt'
+      - '.github/workflows/deploy-lambda.yml'
 
 jobs:
+  # ============================================================================
+  # JOB 1: BUILD AND DEPLOY TO DEV
+  # ============================================================================
   deploy-dev:
-    name: Deploy to Dev Environment
+    name: Deploy to Dev
     runs-on: ubuntu-latest
     environment: dev
-    if: github.event.inputs.environment == 'dev'
     
     steps:
-      - name: Checkout code
+      - name: Checkout Code
         uses: actions/checkout@v4
       
-      - name: Set up Python
+      - name: Set up Python 3.11
         uses: actions/setup-python@v4
         with:
           python-version: '3.11'
       
-      - name: Install dependencies
+      # ============================================================================
+      # BUILD LAMBDA DEPLOYMENT PACKAGE
+      # ============================================================================
+      - name: Install Lambda Dependencies
         run: |
+          echo "📦 Installing Lambda dependencies..."
           python -m pip install --upgrade pip
-          # Install dependencies with Lambda-compatible wheels
-          pip install --platform manylinux2014_x86_64 --target package --implementation cp --python-version 3.11 --only-binary=:all: --upgrade -r requirements.txt
-          # Copy Lambda function
+          
+          # Install Lambda-compatible dependencies
+          pip install \
+            --platform manylinux2014_x86_64 \
+            --target package \
+            --implementation cp \
+            --python-version 3.11 \
+            --only-binary=:all: \
+            --upgrade \
+            -r requirements.txt
+          
+          # Copy Lambda function code
           cp src/lambda_function.py package/
+          
+          echo "✅ Dependencies installed successfully"
       
-      - name: Create deployment package
+      - name: Create Deployment Package
         run: |
+          echo "📦 Creating Lambda deployment package..."
           cd package
-          zip -r ../lambda-deployment-dev-${{ github.sha }}.zip .
+          zip -r ../lambda-deployment-${{ github.sha }}.zip .
           cd ..
+          
+          # Show package size
+          ls -lh lambda-deployment-${{ github.sha }}.zip
+          echo "✅ Deployment package created"
       
-      - name: Configure AWS credentials for Dev
+      # ============================================================================
+      # DEPLOY TO DEV ACCOUNT
+      # ============================================================================
+      - name: Configure AWS Credentials (Dev)
         uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID_DEV }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY_DEV }}
           aws-region: ${{ secrets.AWS_REGION }}
       
-      - name: Deploy to Lambda - Dev
+      - name: Update Lambda Function Code (Dev)
         run: |
+          echo "🚀 Deploying to DEV environment..."
+          echo "Function: csye6225-email-verification-dev"
+          echo "Region: ${{ secrets.AWS_REGION }}"
+          
           aws lambda update-function-code \
             --function-name csye6225-email-verification-dev \
-            --zip-file fileb://lambda-deployment-dev-${{ github.sha }}.zip \
+            --zip-file fileb://lambda-deployment-${{ github.sha }}.zip \
             --region ${{ secrets.AWS_REGION }}
       
-      - name: Wait for Lambda update to complete
+      - name: Wait for Lambda Update (Dev)
         run: |
+          echo "⏳ Waiting for Lambda function to update..."
           aws lambda wait function-updated \
             --function-name csye6225-email-verification-dev \
             --region ${{ secrets.AWS_REGION }}
+          echo "✅ Lambda function updated successfully"
       
-      - name: Update Lambda Environment Variables - Dev
+      - name: Publish Lambda Version (Dev)
         run: |
-          aws lambda update-function-configuration \
-            --function-name csye6225-email-verification-dev \
-            --environment Variables="{
-              DOMAIN=dev.malavgajera.me,
-              FROM_EMAIL=noreply@malavgajera.me,
-              SENDGRID_API_KEY_SECRET_NAME=csye6225-sendgrid-key-dev,
-              DYNAMODB_TABLE_NAME=email-verification-tokens-dev
-            }" \
-            --region ${{ secrets.AWS_REGION }}
-      
-      - name: Wait for configuration update
-        run: |
-          aws lambda wait function-updated \
-            --function-name csye6225-email-verification-dev \
-            --region ${{ secrets.AWS_REGION }}
-      
-      - name: Publish new version - Dev
-        run: |
-          aws lambda publish-version \
+          echo "📝 Publishing new Lambda version..."
+          VERSION=$(aws lambda publish-version \
             --function-name csye6225-email-verification-dev \
             --description "Deployed from GitHub Actions - SHA: ${{ github.sha }}" \
-            --region ${{ secrets.AWS_REGION }}
+            --region ${{ secrets.AWS_REGION }} \
+            --query 'Version' \
+            --output text)
+          
+          echo "✅ Published Lambda version: $VERSION"
+          echo "🔗 Commit: ${{ github.sha }}"
       
-      - name: Upload artifact
+      - name: Verify Deployment (Dev)
+        run: |
+          echo "🔍 Verifying Lambda deployment..."
+          aws lambda get-function \
+            --function-name csye6225-email-verification-dev \
+            --region ${{ secrets.AWS_REGION }} \
+            --query '{FunctionName:Configuration.FunctionName,Runtime:Configuration.Runtime,LastModified:Configuration.LastModified,State:Configuration.State}' \
+            --output table
+          
+          echo "✅ DEV deployment verified"
+      
+      # ============================================================================
+      # UPLOAD ARTIFACT FOR DEMO DEPLOYMENT
+      # ============================================================================
+      - name: Upload Deployment Package
         uses: actions/upload-artifact@v4
         with:
-          name: lambda-deployment-package-dev
-          path: lambda-deployment-dev-${{ github.sha }}.zip
-          retention-days: 7
+          name: lambda-deployment-package
+          path: lambda-deployment-${{ github.sha }}.zip
+          retention-days: 1
+          if-no-files-found: error
 
+  # ============================================================================
+  # JOB 2: DEPLOY TO DEMO (AFTER DEV SUCCESS)
+  # ============================================================================
   deploy-demo:
-    name: Deploy to Demo Environment
+    name: Deploy to Demo
     runs-on: ubuntu-latest
     environment: demo
-    if: github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'demo'
+    needs: deploy-dev  # Wait for dev deployment to succeed
     
     steps:
-      - name: Checkout code
+      - name: Checkout Code
         uses: actions/checkout@v4
       
-      - name: Set up Python
-        uses: actions/setup-python@v4
+      - name: Download Deployment Package
+        uses: actions/download-artifact@v4
         with:
-          python-version: '3.11'
+          name: lambda-deployment-package
       
-      - name: Install dependencies
+      - name: Verify Package Downloaded
         run: |
-          python -m pip install --upgrade pip
-          # Install dependencies with Lambda-compatible wheels
-          pip install --platform manylinux2014_x86_64 --target package --implementation cp --python-version 3.11 --only-binary=:all: --upgrade -r requirements.txt
-          # Copy Lambda function
-          cp src/lambda_function.py package/
+          echo "📦 Verifying deployment package..."
+          ls -lh lambda-deployment-${{ github.sha }}.zip
+          echo "✅ Package downloaded successfully"
       
-      - name: Create deployment package
-        run: |
-          cd package
-          zip -r ../lambda-deployment-demo-${{ github.sha }}.zip .
-          cd ..
-      
-      - name: Configure AWS credentials for Demo
+      # ============================================================================
+      # DEPLOY TO DEMO ACCOUNT
+      # ============================================================================
+      - name: Configure AWS Credentials (Demo)
         uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID_DEMO }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY_DEMO }}
           aws-region: ${{ secrets.AWS_REGION }}
       
-      - name: Deploy to Lambda - Demo
+      - name: Update Lambda Function Code (Demo)
         run: |
+          echo "🚀 Deploying to DEMO environment..."
+          echo "Function: csye6225-email-verification-demo"
+          echo "Region: ${{ secrets.AWS_REGION }}"
+          
           aws lambda update-function-code \
             --function-name csye6225-email-verification-demo \
-            --zip-file fileb://lambda-deployment-demo-${{ github.sha }}.zip \
+            --zip-file fileb://lambda-deployment-${{ github.sha }}.zip \
             --region ${{ secrets.AWS_REGION }}
       
-      - name: Wait for Lambda update to complete
+      - name: Wait for Lambda Update (Demo)
         run: |
+          echo "⏳ Waiting for Lambda function to update..."
           aws lambda wait function-updated \
             --function-name csye6225-email-verification-demo \
             --region ${{ secrets.AWS_REGION }}
+          echo "✅ Lambda function updated successfully"
       
-      - name: Update Lambda Environment Variables - Demo
+      - name: Publish Lambda Version (Demo)
         run: |
-          aws lambda update-function-configuration \
-            --function-name csye6225-email-verification-demo \
-            --environment Variables="{
-              DOMAIN=demo.malavgajera.me,
-              FROM_EMAIL=noreply@malavgajera.me,
-              SENDGRID_API_KEY_SECRET_NAME=csye6225-sendgrid-key-demo,
-              DYNAMODB_TABLE_NAME=email-verification-tokens-demo
-            }" \
-            --region ${{ secrets.AWS_REGION }}
-      
-      - name: Wait for configuration update
-        run: |
-          aws lambda wait function-updated \
-            --function-name csye6225-email-verification-demo \
-            --region ${{ secrets.AWS_REGION }}
-      
-      - name: Publish new version - Demo
-        run: |
-          aws lambda publish-version \
+          echo "📝 Publishing new Lambda version..."
+          VERSION=$(aws lambda publish-version \
             --function-name csye6225-email-verification-demo \
             --description "Deployed from GitHub Actions - SHA: ${{ github.sha }}" \
-            --region ${{ secrets.AWS_REGION }}
+            --region ${{ secrets.AWS_REGION }} \
+            --query 'Version' \
+            --output text)
+          
+          echo "✅ Published Lambda version: $VERSION"
+          echo "🔗 Commit: ${{ github.sha }}"
       
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: lambda-deployment-package-demo
-          path: lambda-deployment-demo-${{ github.sha }}.zip
-          retention-days: 7
+      - name: Verify Deployment (Demo)
+        run: |
+          echo "🔍 Verifying Lambda deployment..."
+          aws lambda get-function \
+            --function-name csye6225-email-verification-demo \
+            --region ${{ secrets.AWS_REGION }} \
+            --query '{FunctionName:Configuration.FunctionName,Runtime:Configuration.Runtime,LastModified:Configuration.LastModified,State:Configuration.State}' \
+            --output table
+          
+          echo "✅ DEMO deployment verified"
+      
+      # ============================================================================
+      # DEPLOYMENT SUMMARY
+      # ============================================================================
+      - name: Deployment Summary
+        run: |
+          echo ""
+          echo "╔════════════════════════════════════════════════════════════════╗"
+          echo "║           🎉 DEPLOYMENT COMPLETED SUCCESSFULLY 🎉             ║"
+          echo "╚════════════════════════════════════════════════════════════════╝"
+          echo ""
+          echo "✅ Dev Environment:  csye6225-email-verification-dev"
+          echo "✅ Demo Environment: csye6225-email-verification-demo"
+          echo ""
+          echo "📦 Package: lambda-deployment-${{ github.sha }}.zip"
+          echo "🔗 Commit:  ${{ github.sha }}"
+          echo "👤 Author:  ${{ github.actor }}"
+          echo "📅 Date:    $(date -u +'%Y-%m-%d %H:%M:%S UTC')"
+          echo ""
+          echo "Both environments are now running the latest Lambda code!"
+          echo "════════════════════════════════════════════════════════════════"
