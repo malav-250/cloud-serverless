@@ -153,7 +153,7 @@ def send_verification_email(email, token, first_name):
         message = Mail(
             from_email=Email(from_email),
             to_emails=To(email),
-            subject='Assignment  9: Verify Your Email Address',
+            subject='Assignment 9  Demo : Verify Your Email Address',
             html_content=f"""
             <html>
                 <body>
