@@ -1,7 +1,7 @@
 ## Prerequisites for Local Development
 
 ### Required Software
-- **Python 3.11** ([Download](https://www.python.org/downloads/))
+- **Python 3.11** ([Download](https://www.python.org/downloads/)) 
 - **AWS CLI** configured with profiles ([Install Guide](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html))
 - **Git** for version control
 
